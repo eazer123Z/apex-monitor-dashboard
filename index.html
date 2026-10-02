@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>APEX Monitor</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .num { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body class="bg-neutral-50 text-neutral-900 min-h-screen">
+<div class="max-w-3xl mx-auto px-4 py-6">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-xl font-bold">APEX Monitor</h1>
+      <p class="text-sm text-neutral-500">Paper trading &middot; data virtual</p>
+    </div>
+    <div id="liveBadge" class="text-xs font-semibold px-3 py-1.5 rounded-full bg-neutral-200 text-neutral-600">—</div>
+  </div>
+
+  <!-- Metric cards -->
+  <div class="grid grid-cols-2 gap-3 mb-6">
+    <div class="bg-white border border-neutral-200 rounded-lg p-4">
+      <p class="text-xs text-neutral-500 mb-1">Equity</p>
+      <p id="mEquity" class="num text-2xl font-bold">$—</p>
+    </div>
+    <div class="bg-white border border-neutral-200 rounded-lg p-4">
+      <p class="text-xs text-neutral-500 mb-1">Net PnL</p>
+      <p id="mPnl" class="num text-2xl font-bold">$—</p>
+    </div>
+    <div class="bg-white border border-neutral-200 rounded-lg p-4">
+      <p class="text-xs text-neutral-500 mb-1">Win Rate</p>
+      <p id="mWr" class="num text-2xl font-bold text-teal-600">—%</p>
+    </div>
+    <div class="bg-white border border-neutral-200 rounded-lg p-4">
+      <p class="text-xs text-neutral-500 mb-1">Trade</p>
+      <p id="mTrades" class="num text-2xl font-bold">—</p>
+      <p id="mOpen" class="text-xs text-neutral-500 mt-1">open: —</p>
+    </div>
+  </div>
+
+  <!-- Recent trades -->
+  <div class="bg-white border border-neutral-200 rounded-lg p-4 mb-6">
+    <h2 class="text-sm font-bold mb-3">10 Trade Terakhir</h2>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-xs text-neutral-500 border-b border-neutral-200">
+            <th class="pb-2 font-medium">Pair</th>
+            <th class="pb-2 font-medium text-right">PnL</th>
+            <th class="pb-2 font-medium text-right">Keluar</th>
+          </tr>
+        </thead>
+        <tbody id="tradeRows">
+          <tr><td colspan="3" class="py-4 text-center text-neutral-400">Memuat…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Signals -->
+  <div class="bg-white border border-neutral-200 rounded-lg p-4 mb-6">
+    <h2 class="text-sm font-bold mb-2">Sinyal HWRv9</h2>
+    <p id="sigCount" class="text-sm text-neutral-600">—</p>
+    <div id="sigList" class="mt-2 space-y-1"></div>
+  </div>
+
+  <!-- System status -->
+  <div class="bg-white border border-neutral-200 rounded-lg p-4 mb-6">
+    <h2 class="text-sm font-bold mb-3">Status Sistem</h2>
+    <div class="grid grid-cols-2 gap-y-2 text-sm">
+      <span class="text-neutral-500">Mode</span><span id="sMode" class="num text-right font-medium">—</span>
+      <span class="text-neutral-500">Paused</span><span id="sPaused" class="num text-right font-medium">—</span>
+      <span class="text-neutral-500">Unlocked</span><span id="sUnlocked" class="num text-right font-medium">—</span>
+      <span class="text-neutral-500">Armed</span><span id="sArmed" class="num text-right font-medium">—</span>
+      <span class="text-neutral-500">TP / SL</span><span id="sConfig" class="num text-right font-medium">—</span>
+    </div>
+  </div>
+
+  <p id="updatedAt" class="text-xs text-neutral-400 text-center mb-8">—</p>
+</div>
+
+<script>
+const REFRESH_MS = 30000;
+
+function fmtUsd(v) {
+  const s = v < 0 ? "-" : "";
+  return s + "$" + Math.abs(v).toFixed(2);
+}
+
+function render(d) {
+  const p = d.paper || {};
+  const pnl = p.pnl ?? 0;
+
+  document.getElementById("mEquity").textContent = fmtUsd(p.equity ?? 0);
+  const pnlEl = document.getElementById("mPnl");
+  pnlEl.textContent = fmtUsd(pnl);
+  pnlEl.className = "num text-2xl font-bold " + (pnl < 0 ? "text-red-600" : pnl > 0 ? "text-green-600" : "");
+  document.getElementById("mWr").textContent = (p.win_rate ?? 0) + "%";
+  document.getElementById("mTrades").textContent = p.closed ?? 0;
+  document.getElementById("mOpen").textContent = "open: " + (p.open ?? 0);
+
+  // Trades table
+  const rows = (d.recent_trades || []).map(t => {
+    const pnlNet = t.pnl_net ?? 0;
+    const cls = pnlNet < 0 ? "text-red-600" : pnlNet > 0 ? "text-green-600" : "text-neutral-500";
+    const exitTs = (t.exit_ts || "").slice(0, 16).replace("T", " ");
+    return `<tr class="border-b border-neutral-100 last:border-0">
+      <td class="py-2 font-medium">${t.pair || "—"}</td>
+      <td class="py-2 text-right num font-medium ${cls}">${fmtUsd(pnlNet)}</td>
+      <td class="py-2 text-right num text-neutral-500 text-xs">${t.exit_reason || "—"}<br>${exitTs}</td>
+    </tr>`;
+  }).join("");
+  document.getElementById("tradeRows").innerHTML = rows || `<tr><td colspan="3" class="py-4 text-center text-neutral-400">Belum ada trade</td></tr>`;
+
+  // Signals
+  const sig = d.signals || {};
+  document.getElementById("sigCount").textContent = (sig.count ?? 0) + " sinyal aktif";
+  document.getElementById("sigList").innerHTML = (sig.latest || []).map(s =>
+    `<div class="text-xs text-neutral-600 border-l-2 border-teal-500 pl-2 py-1">${JSON.stringify(s).slice(0, 120)}</div>`
+  ).join("");
+
+  // System
+  const l = d.live || {};
+  document.getElementById("sMode").textContent = l.mode || "—";
+  document.getElementById("sPaused").textContent = l.paused ? "Ya" : "Tidak";
+  document.getElementById("sUnlocked").textContent = l.unlocked ? "Ya" : "Tidak";
+  document.getElementById("sArmed").textContent = l.armed ? "Ya" : "Tidak";
+  const c = d.config || {};
+  document.getElementById("sConfig").textContent =
+    (c.tp_pct != null ? (c.tp_pct * 100).toFixed(0) + "%" : "—") + " / " +
+    (c.sl_pct != null ? (c.sl_pct * 100).toFixed(0) + "%" : "—");
+
+  const badge = document.getElementById("liveBadge");
+  if (l.unlocked && !l.paused) {
+    badge.textContent = "LIVE";
+    badge.className = "text-xs font-semibold px-3 py-1.5 rounded-full bg-teal-600 text-white";
+  } else if (l.paused) {
+    badge.textContent = "PAUSED";
+    badge.className = "text-xs font-semibold px-3 py-1.5 rounded-full bg-neutral-200 text-neutral-600";
+  } else {
+    badge.textContent = l.state || "—";
+    badge.className = "text-xs font-semibold px-3 py-1.5 rounded-full bg-neutral-200 text-neutral-600";
+  }
+
+  const ua = document.getElementById("updatedAt");
+  ua.textContent = d.updated_at ? "Update: " + d.updated_at.slice(0, 19).replace("T", " ") + " UTC" : "";
+}
+
+async function load() {
+  try {
+    const r = await fetch("data.json?t=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    render(await r.json());
+  } catch (e) {
+    document.getElementById("updatedAt").textContent = "Gagal memuat data — coba lagi…";
+  }
+}
+
+load();
+setInterval(load, REFRESH_MS);
+</script>
+</body>
+</html>
